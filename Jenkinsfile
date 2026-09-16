@@ -67,7 +67,7 @@ pipeline {
                         sonar-scanner \
                             -Dsonar.projectKey=banking-platform-devsecops \
                             -Dsonar.sources=application \
-                            -Dsonar.tests=application/tests
+                            -Dsonar.exclusions=application/tests/**
 
                         echo "SonarQube analysis completed."
                     '''
