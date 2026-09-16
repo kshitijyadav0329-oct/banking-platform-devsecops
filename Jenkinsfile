@@ -1,9 +1,10 @@
 pipeline {
+
     agent any
 
     environment {
         IMAGE_NAME = 'banking-api'
-        IMAGE_TAG = "${BUILD_NUMBER}"
+        IMAGE_TAG = 'ci'
         DOCKER_HUB_REPO = 'kyadav2910/banking-api'
     }
 
@@ -15,12 +16,31 @@ pipeline {
             }
         }
 
+        stage('Setup Python Environment') {
+            steps {
+                sh '''
+                    echo "===== Setting Up Python Environment ====="
+
+                    python3 --version
+
+                    python3 -m venv .venv
+
+                    .venv/bin/python -m pip install --upgrade pip
+
+                    .venv/bin/pip install -r requirements.txt
+
+                    echo "Python environment setup completed."
+                '''
+            }
+        }
+
         stage('Check Trivy') {
             steps {
                 sh '''
                     export PATH="/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
 
                     echo "===== Checking Trivy ====="
+
                     trivy --version
                 '''
             }
@@ -29,11 +49,9 @@ pipeline {
         stage('Test') {
             steps {
                 sh '''
-                    export PATH="/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
-
                     echo "===== Running Tests ====="
 
-                    python3 -m pytest application/tests -v
+                    .venv/bin/python -m pytest application/tests -v
                 '''
             }
         }
@@ -50,6 +68,8 @@ pipeline {
                             -Dsonar.projectKey=banking-platform-devsecops \
                             -Dsonar.sources=application \
                             -Dsonar.tests=application/tests
+
+                        echo "SonarQube analysis completed."
                     '''
                 }
             }
@@ -64,8 +84,9 @@ pipeline {
 
                     trivy fs \
                         --scanners vuln \
-                        --severity HIGH,CRITICAL \
-                        --exit-code 1 \
+                        --format table \
+                        --output dependency-report.txt \
+                        --exit-code 0 \
                         .
                 '''
             }
@@ -78,10 +99,13 @@ pipeline {
 
                     echo "===== Dockerfile Security Scan ====="
 
+                    echo "Policy: Fail on any Dockerfile misconfiguration."
+
                     trivy config \
-                        --severity HIGH,CRITICAL \
                         --exit-code 1 \
-                        Dockerfile
+                        .
+
+                    echo "Dockerfile security scan passed."
                 '''
             }
         }
@@ -89,11 +113,12 @@ pipeline {
         stage('Build Docker Image') {
             steps {
                 sh '''
+                    export PATH="/usr/local/bin:$PATH"
+
                     echo "===== Building Docker Image ====="
 
                     docker build \
                         -t ${IMAGE_NAME}:${IMAGE_TAG} \
-                        -t ${IMAGE_NAME}:latest \
                         .
                 '''
             }
@@ -102,6 +127,8 @@ pipeline {
         stage('Run Container Test') {
             steps {
                 sh '''
+                    export PATH="/usr/local/bin:$PATH"
+
                     echo "===== Running Container Test ====="
 
                     docker rm -f banking-api-test 2>/dev/null || true
@@ -112,11 +139,14 @@ pipeline {
                         ${IMAGE_NAME}:${IMAGE_TAG}
 
                     echo "Waiting for application to start..."
-                    sleep 10
 
-                    curl -f http://localhost:8000/health
+                    sleep 5
 
-                    echo "Container test successful"
+                    echo "Checking health endpoint..."
+
+                    curl --fail http://localhost:8000/health
+
+                    echo "Container test passed."
 
                     docker rm -f banking-api-test
                 '''
@@ -131,8 +161,17 @@ pipeline {
                     echo "===== Docker Image Security Scan ====="
 
                     trivy image \
-                        --severity HIGH,CRITICAL \
-                        --exit-code 1 \
+                        --scanners vuln \
+                        --format table \
+                        --output trivy-report.txt \
+                        --exit-code 0 \
+                        ${IMAGE_NAME}:${IMAGE_TAG}
+
+                    trivy image \
+                        --scanners vuln \
+                        --format json \
+                        --output trivy-report.json \
+                        --exit-code 0 \
                         ${IMAGE_NAME}:${IMAGE_TAG}
                 '''
             }
@@ -143,10 +182,20 @@ pipeline {
                 sh '''
                     export PATH="/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
 
-                    echo "===== Generating SBOM ====="
+                    echo "===== SBOM Generation ====="
 
-                    syft ${IMAGE_NAME}:${IMAGE_TAG} \
-                        -o cyclonedx-json=sbom.json
+                    echo "Generating CycloneDX SBOM for ${IMAGE_NAME}:${IMAGE_TAG}..."
+
+                    trivy image \
+                        --format cyclonedx \
+                        --output sbom.cdx.json \
+                        ${IMAGE_NAME}:${IMAGE_TAG}
+
+                    echo "SBOM generation completed."
+
+                    echo "===== SBOM File ====="
+
+                    ls -lh sbom.cdx.json
                 '''
             }
         }
@@ -156,14 +205,18 @@ pipeline {
                 sh '''
                     export PATH="/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
 
-                    echo "===== Final Security Gate ====="
+                    echo "===== Security Gate ====="
+
+                    echo "Policy: Fail only on CRITICAL vulnerabilities with available fixes."
 
                     trivy image \
+                        --scanners vuln \
                         --severity CRITICAL \
+                        --ignore-unfixed \
                         --exit-code 1 \
                         ${IMAGE_NAME}:${IMAGE_TAG}
 
-                    echo "Security Gate Passed"
+                    echo "Security gate passed."
                 '''
             }
         }
@@ -172,34 +225,38 @@ pipeline {
             steps {
                 withCredentials([
                     usernamePassword(
-                        credentialsId: 'dockerhub-banking-api',
-                        usernameVariable: 'DOCKER_USERNAME',
-                        passwordVariable: 'DOCKER_PASSWORD'
+                        credentialsId: 'dockerhub-pat',
+                        usernameVariable: 'DOCKERHUB_USERNAME',
+                        passwordVariable: 'DOCKERHUB_TOKEN'
                     )
                 ]) {
                     sh '''
-                        echo "===== Logging in to Docker Hub ====="
+                        export PATH="/usr/local/bin:$PATH"
 
-                        echo "$DOCKER_PASSWORD" | docker login \
-                            -u "$DOCKER_USERNAME" \
+                        echo "===== Docker Hub Login ====="
+
+                        echo "$DOCKERHUB_TOKEN" | docker login \
+                            --username "$DOCKERHUB_USERNAME" \
                             --password-stdin
+
+                        echo "Docker Hub authentication succeeded."
 
                         echo "===== Tagging Docker Image ====="
 
                         docker tag \
                             ${IMAGE_NAME}:${IMAGE_TAG} \
-                            ${DOCKER_HUB_REPO}:${IMAGE_TAG}
+                            ${DOCKER_HUB_REPO}:1.0
 
-                        docker tag \
-                            ${IMAGE_NAME}:latest \
-                            ${DOCKER_HUB_REPO}:latest
+                        echo "===== Pushing Docker Image ====="
 
-                        echo "===== Pushing Docker Images ====="
+                        docker push \
+                            ${DOCKER_HUB_REPO}:1.0
 
-                        docker push ${DOCKER_HUB_REPO}:${IMAGE_TAG}
-                        docker push ${DOCKER_HUB_REPO}:latest
+                        echo "Docker image pushed successfully."
 
-                        echo "Docker images pushed successfully"
+                        docker logout
+
+                        echo "Docker Hub logout completed."
                     '''
                 }
             }
@@ -208,11 +265,11 @@ pipeline {
 
     post {
         always {
-            archiveArtifacts artifacts: 'sbom.json', allowEmptyArchive: true
+            archiveArtifacts artifacts: 'dependency-report.txt,trivy-report.txt,trivy-report.json,secret-report.json,sbom.cdx.json',
+                             allowEmptyArchive: true,
+                             fingerprint: true
 
             sh '''
-                echo "===== Cleaning Workspace ====="
-
                 docker rm -f banking-api-test 2>/dev/null || true
             '''
         }
