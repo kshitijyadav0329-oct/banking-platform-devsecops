@@ -1,4 +1,4 @@
-
+```groovy
 pipeline {
 
     agent any
@@ -20,15 +20,10 @@ pipeline {
             steps {
                 sh '''
                     echo "===== Setting Up Python Environment ====="
-
                     python3 --version
-
                     python3 -m venv .venv
-
                     .venv/bin/python -m pip install --upgrade pip
-
                     .venv/bin/pip install -r requirements.txt
-
                     echo "Python environment setup completed."
                 '''
             }
@@ -38,9 +33,7 @@ pipeline {
             steps {
                 sh '''
                     export PATH="/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
-
                     echo "===== Checking Trivy ====="
-
                     trivy --version
                 '''
             }
@@ -50,7 +43,6 @@ pipeline {
             steps {
                 sh '''
                     echo "===== Running Tests ====="
-
                     .venv/bin/python -m pytest application/tests -v
                 '''
             }
@@ -61,7 +53,6 @@ pipeline {
                 withSonarQubeEnv('SonarQube') {
                     sh '''
                         export PATH="/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
-
                         echo "===== SonarQube Analysis ====="
 
                         sonar-scanner \
@@ -79,7 +70,6 @@ pipeline {
             steps {
                 sh '''
                     export PATH="/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
-
                     echo "===== Dependency Security Scan ====="
 
                     trivy fs \
@@ -96,7 +86,6 @@ pipeline {
             steps {
                 sh '''
                     export PATH="/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
-
                     echo "===== Dockerfile and Kubernetes Configuration Scan ====="
 
                     trivy config \
@@ -112,7 +101,6 @@ pipeline {
             steps {
                 sh '''
                     export PATH="/usr/local/bin:$PATH"
-
                     echo "===== Building Docker Image ====="
 
                     docker build \
@@ -128,7 +116,6 @@ pipeline {
             steps {
                 sh '''
                     export PATH="/usr/local/bin:$PATH"
-
                     echo "===== Running Container Test ====="
 
                     docker rm -f banking-api-test 2>/dev/null || true
@@ -139,15 +126,12 @@ pipeline {
                         ${IMAGE_NAME}:${BUILD_NUMBER}
 
                     echo "Waiting for application to start..."
-
                     sleep 5
 
                     echo "Checking health endpoint..."
-
                     curl --fail http://localhost:8000/health
 
                     echo "Container test passed."
-
                     docker rm -f banking-api-test
                 '''
             }
@@ -157,7 +141,6 @@ pipeline {
             steps {
                 sh '''
                     export PATH="/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
-
                     echo "===== Docker Image Security Scan ====="
 
                     trivy image \
@@ -181,7 +164,6 @@ pipeline {
             steps {
                 sh '''
                     export PATH="/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
-
                     echo "===== SBOM Generation ====="
 
                     trivy image \
@@ -190,7 +172,6 @@ pipeline {
                         ${IMAGE_NAME}:${BUILD_NUMBER}
 
                     echo "SBOM generation completed."
-
                     ls -lh sbom.cdx.json
                 '''
             }
@@ -200,7 +181,6 @@ pipeline {
             steps {
                 sh '''
                     export PATH="/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
-
                     echo "===== Security Gate ====="
 
                     echo "Policy: Fail on CRITICAL vulnerabilities with available fixes."
@@ -248,7 +228,6 @@ pipeline {
                             ${DOCKER_HUB_REPO}:${BUILD_NUMBER}
 
                         docker logout
-
                         echo "Docker image pushed successfully."
                     '''
                 }
@@ -291,10 +270,10 @@ ASKPASS_EOF
 
                         echo "===== Checking Remote Main Branch ====="
 
-                        git fetch origin main
+                        git fetch origin +refs/heads/main:refs/remotes/origin/main
 
                         CURRENT_COMMIT="$(git rev-parse HEAD)"
-                        REMOTE_COMMIT="$(git rev-parse origin/main)"
+                        REMOTE_COMMIT="$(git rev-parse refs/remotes/origin/main)"
 
                         echo "Build source commit: $CURRENT_COMMIT"
                         echo "Remote main commit:  $REMOTE_COMMIT"
@@ -317,7 +296,7 @@ content = manifest.read_text()
 build_number = os.environ["BUILD_NUMBER"]
 
 pattern = re.compile(
-    r"(?m)^([ \t]*image:[ \t]*kyadav2910/banking-api:)[^\s]+([ \t]*)$"
+    r"(?m)^([ \\t]*image:[ \\t]*kyadav2910/banking-api:)[^\\s]+([ \\t]*)$"
 )
 
 updated, count = pattern.subn(
@@ -337,9 +316,7 @@ PY
                         echo "===== Reviewing Manifest Change ====="
 
                         git diff --check
-
                         git diff -- k8s/deployment.yaml
-
                         git add -- k8s/deployment.yaml
 
                         if git diff --cached --quiet; then
@@ -365,9 +342,11 @@ PY
 
     post {
         always {
-            archiveArtifacts artifacts: 'dependency-report.txt,trivy-report.txt,trivy-report.json,secret-report.json,sbom.cdx.json',
-                             allowEmptyArchive: true,
-                             fingerprint: true
+            archiveArtifacts(
+                artifacts: 'dependency-report.txt,trivy-report.txt,trivy-report.json,secret-report.json,sbom.cdx.json',
+                allowEmptyArchive: true,
+                fingerprint: true
+            )
 
             sh '''
                 docker rm -f banking-api-test 2>/dev/null || true
@@ -379,3 +358,4 @@ PY
         }
     }
 }
+```
