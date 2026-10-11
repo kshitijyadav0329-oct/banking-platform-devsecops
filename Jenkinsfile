@@ -1,30 +1,23 @@
+
 pipeline {
 
     agent any
 
     environment {
-
         IMAGE_NAME = 'banking-api'
         DOCKER_HUB_REPO = 'kyadav2910/banking-api'
-
     }
 
     stages {
 
         stage('Checkout') {
-
             steps {
-
                 checkout scm
-
             }
-
         }
 
         stage('Setup Python Environment') {
-
             steps {
-
                 sh '''
                     echo "===== Setting Up Python Environment ====="
 
@@ -38,15 +31,11 @@ pipeline {
 
                     echo "Python environment setup completed."
                 '''
-
             }
-
         }
 
         stage('Check Trivy') {
-
             steps {
-
                 sh '''
                     export PATH="/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
 
@@ -54,31 +43,22 @@ pipeline {
 
                     trivy --version
                 '''
-
             }
-
         }
 
         stage('Test') {
-
             steps {
-
                 sh '''
                     echo "===== Running Tests ====="
 
                     .venv/bin/python -m pytest application/tests -v
                 '''
-
             }
-
         }
 
         stage('SonarQube Analysis') {
-
             steps {
-
                 withSonarQubeEnv('SonarQube') {
-
                     sh '''
                         export PATH="/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
 
@@ -91,17 +71,12 @@ pipeline {
 
                         echo "SonarQube analysis completed."
                     '''
-
                 }
-
             }
-
         }
 
         stage('Dependency Security Scan') {
-
             steps {
-
                 sh '''
                     export PATH="/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
 
@@ -114,37 +89,27 @@ pipeline {
                         --exit-code 0 \
                         .
                 '''
-
             }
-
         }
 
         stage('Dockerfile Security Scan') {
-
             steps {
-
                 sh '''
                     export PATH="/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
 
-                    echo "===== Dockerfile Security Scan ====="
-
-                    echo "Policy: Fail on any Dockerfile misconfiguration."
+                    echo "===== Dockerfile and Kubernetes Configuration Scan ====="
 
                     trivy config \
                         --exit-code 1 \
                         .
 
-                    echo "Dockerfile security scan passed."
+                    echo "Configuration security scan passed."
                 '''
-
             }
-
         }
 
         stage('Build Docker Image') {
-
             steps {
-
                 sh '''
                     export PATH="/usr/local/bin:$PATH"
 
@@ -156,15 +121,11 @@ pipeline {
 
                     echo "Docker image ${IMAGE_NAME}:${BUILD_NUMBER} built successfully."
                 '''
-
             }
-
         }
 
         stage('Run Container Test') {
-
             steps {
-
                 sh '''
                     export PATH="/usr/local/bin:$PATH"
 
@@ -189,15 +150,11 @@ pipeline {
 
                     docker rm -f banking-api-test
                 '''
-
             }
-
         }
 
         stage('Security Scan') {
-
             steps {
-
                 sh '''
                     export PATH="/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
 
@@ -217,21 +174,15 @@ pipeline {
                         --exit-code 0 \
                         ${IMAGE_NAME}:${BUILD_NUMBER}
                 '''
-
             }
-
         }
 
         stage('SBOM Generation') {
-
             steps {
-
                 sh '''
                     export PATH="/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
 
                     echo "===== SBOM Generation ====="
-
-                    echo "Generating CycloneDX SBOM for ${IMAGE_NAME}:${BUILD_NUMBER}..."
 
                     trivy image \
                         --format cyclonedx \
@@ -240,25 +191,19 @@ pipeline {
 
                     echo "SBOM generation completed."
 
-                    echo "===== SBOM File ====="
-
                     ls -lh sbom.cdx.json
                 '''
-
             }
-
         }
 
         stage('Security Gate') {
-
             steps {
-
                 sh '''
                     export PATH="/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
 
                     echo "===== Security Gate ====="
 
-                    echo "Policy: Fail only on CRITICAL vulnerabilities with available fixes."
+                    echo "Policy: Fail on CRITICAL vulnerabilities with available fixes."
 
                     trivy image \
                         --scanners vuln \
@@ -269,26 +214,20 @@ pipeline {
 
                     echo "Security gate passed."
                 '''
-
             }
-
         }
 
         stage('Push Docker Image') {
-
             steps {
-
                 withCredentials([
-
                     usernamePassword(
                         credentialsId: 'dockerhub-pat',
                         usernameVariable: 'DOCKERHUB_USERNAME',
                         passwordVariable: 'DOCKERHUB_TOKEN'
                     )
-
                 ]) {
-
                     sh '''
+                        set +x
                         export PATH="/usr/local/bin:$PATH"
 
                         echo "===== Docker Hub Login ====="
@@ -296,8 +235,6 @@ pipeline {
                         echo "$DOCKERHUB_TOKEN" | docker login \
                             --username "$DOCKERHUB_USERNAME" \
                             --password-stdin
-
-                        echo "Docker Hub authentication succeeded."
 
                         echo "===== Tagging Docker Image ====="
 
@@ -310,218 +247,135 @@ pipeline {
                         docker push \
                             ${DOCKER_HUB_REPO}:${BUILD_NUMBER}
 
-                        echo "Docker image pushed successfully."
-
                         docker logout
 
-                        echo "Docker Hub logout completed."
+                        echo "Docker image pushed successfully."
                     '''
-
                 }
-
             }
-
         }
 
-        stage('Deploy to Kubernetes') {
-
+        stage('Update GitOps Manifest') {
             steps {
+                withCredentials([
+                    usernamePassword(
+                        credentialsId: 'github-pat',
+                        usernameVariable: 'GITHUB_USERNAME',
+                        passwordVariable: 'GITHUB_TOKEN'
+                    )
+                ]) {
+                    sh '''
+                        set +x
 
-                sh '''
-                    export PATH="/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
+                        echo "===== Preparing GitOps Update ====="
 
-                    echo "===== Kubernetes Deployment ====="
+                        ASKPASS_SCRIPT="$(mktemp)"
+                        trap 'rm -f "$ASKPASS_SCRIPT"' EXIT
 
-                    echo "Kubernetes context:"
+                        cat > "$ASKPASS_SCRIPT" <<'ASKPASS_EOF'
+#!/bin/sh
+case "$1" in
+    *Username*) printf '%s\\n' "$GITHUB_USERNAME" ;;
+    *Password*) printf '%s\\n' "$GITHUB_TOKEN" ;;
+    *) exit 1 ;;
+esac
+ASKPASS_EOF
 
-                    kubectl config current-context
+                        chmod 700 "$ASKPASS_SCRIPT"
 
-                    echo "Kubernetes nodes:"
+                        export GIT_ASKPASS="$ASKPASS_SCRIPT"
+                        export GIT_TERMINAL_PROMPT=0
 
-                    kubectl get nodes
+                        git config user.name "Jenkins GitOps Bot"
+                        git config user.email "jenkins-gitops@users.noreply.github.com"
 
-                    echo "===== Applying Kubernetes Manifests ====="
+                        echo "===== Checking Remote Main Branch ====="
 
-                    kubectl apply -f k8s/deployment.yaml
+                        git fetch origin main
 
-                    kubectl apply -f k8s/service.yaml
+                        CURRENT_COMMIT="$(git rev-parse HEAD)"
+                        REMOTE_COMMIT="$(git rev-parse origin/main)"
 
-                    echo "===== Updating Deployment Image ====="
+                        echo "Build source commit: $CURRENT_COMMIT"
+                        echo "Remote main commit:  $REMOTE_COMMIT"
 
-                    kubectl set image deployment/banking-api \
-                        banking-api=${DOCKER_HUB_REPO}:${BUILD_NUMBER}
-
-                    echo "===== Waiting for Kubernetes Rollout ====="
-
-                    kubectl rollout status deployment/banking-api \
-                        --timeout=180s
-
-                    echo "Kubernetes rollout completed successfully."
-
-                    echo "===== Deployment Status ====="
-
-                    kubectl get deployment banking-api
-
-                    echo "===== Pod Status ====="
-
-                    kubectl get pods -l app=banking-api
-                '''
-
-            }
-
-        }
-
-        stage('Kubernetes Deployment Verification') {
-
-            steps {
-
-                sh '''
-                    export PATH="/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
-
-                    echo "===== Kubernetes Deployment Verification ====="
-
-                    AVAILABLE=$(kubectl get deployment banking-api \
-                        -o jsonpath='{.status.availableReplicas}')
-
-                    READY=$(kubectl get deployment banking-api \
-                        -o jsonpath='{.status.readyReplicas}')
-
-                    echo "Available replicas: ${AVAILABLE}"
-
-                    echo "Ready replicas: ${READY}"
-
-                    if [ "${AVAILABLE}" != "2" ]; then
-
-                        echo "ERROR: Expected 2 available replicas."
-
-                        kubectl get pods -l app=banking-api
-
-                        exit 1
-
-                    fi
-
-                    if [ "${READY}" != "2" ]; then
-
-                        echo "ERROR: Expected 2 ready replicas."
-
-                        kubectl get pods -l app=banking-api
-
-                        exit 1
-
-                    fi
-
-                    echo "Kubernetes deployment verification passed."
-                '''
-
-            }
-
-        }
-
-        stage('Kubernetes Health Check') {
-
-            steps {
-
-                sh '''
-                    export PATH="/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
-
-                    echo "===== Kubernetes Application Health Check ====="
-
-                    echo "Starting temporary port-forward..."
-
-                    kubectl port-forward service/banking-api 8000:8000 \
-                        > /tmp/banking-api-port-forward.log 2>&1 &
-
-                    PORT_FORWARD_PID=$!
-
-                    echo "Port-forward PID: ${PORT_FORWARD_PID}"
-
-                    cleanup() {
-
-                        echo "Stopping port-forward..."
-
-                        kill ${PORT_FORWARD_PID} 2>/dev/null || true
-
-                    }
-
-                    trap cleanup EXIT
-
-                    echo "Waiting for port-forward and application to become ready..."
-
-                    HEALTH_CHECK_PASSED=false
-
-                    for i in {1..15}; do
-
-                        if curl --silent --fail \
-                            http://127.0.0.1:8000/health \
-                            > /tmp/banking-api-health.json; then
-
-                            HEALTH_CHECK_PASSED=true
-
-                            break
-
+                        if [ "$CURRENT_COMMIT" != "$REMOTE_COMMIT" ]; then
+                            echo "ERROR: Remote main changed during the build."
+                            echo "Refusing to update the GitOps manifest."
+                            exit 1
                         fi
 
-                        echo "Health check attempt ${i}/15 failed. Retrying..."
+                        echo "===== Updating Kubernetes Image Tag ====="
 
-                        sleep 2
+                        python3 - <<'PY'
+import os
+import re
+from pathlib import Path
 
-                    done
+manifest = Path("k8s/deployment.yaml")
+content = manifest.read_text()
+build_number = os.environ["BUILD_NUMBER"]
 
-                    if [ "$HEALTH_CHECK_PASSED" != "true" ]; then
+pattern = re.compile(
+    r"(?m)^([ \t]*image:[ \t]*kyadav2910/banking-api:)[^\s]+([ \t]*)$"
+)
 
-                        echo "ERROR: Kubernetes application health check failed."
+updated, count = pattern.subn(
+    lambda match: f"{match.group(1)}{build_number}{match.group(2)}",
+    content
+)
 
-                        echo "===== Port Forward Log ====="
+if count != 1:
+    raise SystemExit(
+        f"ERROR: Expected exactly one banking-api image entry; found {count}."
+    )
 
-                        cat /tmp/banking-api-port-forward.log || true
+manifest.write_text(updated)
+print(f"Updated {manifest} to image tag {build_number}.")
+PY
 
-                        exit 1
+                        echo "===== Reviewing Manifest Change ====="
 
-                    fi
+                        git diff --check
 
-                    echo "Health response:"
+                        git diff -- k8s/deployment.yaml
 
-                    cat /tmp/banking-api-health.json
+                        git add -- k8s/deployment.yaml
 
-                    echo
+                        if git diff --cached --quiet; then
+                            echo "ERROR: No GitOps manifest change detected."
+                            exit 1
+                        fi
 
-                    echo "Kubernetes application health check passed."
-                '''
+                        echo "===== Committing GitOps Update ====="
 
+                        git commit \
+                            -m "gitops: deploy banking-api build ${BUILD_NUMBER}"
+
+                        echo "===== Pushing GitOps Commit ====="
+
+                        git push origin HEAD:main
+
+                        echo "GitOps manifest committed and pushed successfully."
+                    '''
+                }
             }
-
         }
-
     }
 
     post {
-
         always {
-
             archiveArtifacts artifacts: 'dependency-report.txt,trivy-report.txt,trivy-report.json,secret-report.json,sbom.cdx.json',
-
-                allowEmptyArchive: true,
-
-                fingerprint: true
+                             allowEmptyArchive: true,
+                             fingerprint: true
 
             sh '''
                 docker rm -f banking-api-test 2>/dev/null || true
             '''
-
         }
 
         success {
-
-            echo 'Pipeline completed successfully!'
-
+            echo 'CI completed and GitOps update pushed successfully!'
         }
-
-        failure {
-
-            echo 'Pipeline failed. Check the stage logs above.'
-
-        }
-
     }
-
 }
