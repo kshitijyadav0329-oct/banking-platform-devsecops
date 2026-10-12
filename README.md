@@ -284,3 +284,4 @@ The implementation focuses on:
 - GitOps-based delivery
 - Observability and operational readiness
 The project is intentionally being developed incrementally to demonstrate how a DevSecOps platform can evolve from Continuous Integration into a complete automated delivery platform.
+Webhook test: GitHub push events should trigger Jenkins automatically.
