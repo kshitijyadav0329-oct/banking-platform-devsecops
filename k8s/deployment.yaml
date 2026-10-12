@@ -25,7 +25,7 @@ spec:
 
       containers:
         - name: banking-api
-          image: kyadav2910/banking-api:44
+          image: kyadav2910/banking-api:45
           imagePullPolicy: IfNotPresent
 
           securityContext:
