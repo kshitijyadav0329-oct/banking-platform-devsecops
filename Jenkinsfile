@@ -15,6 +15,16 @@ pipeline {
             }
         }
 
+        stage('Skip GitOps-triggered builds') {
+            steps {
+                scmSkip(
+                    deleteBuild: false,
+                    skipPattern: '.*gitops: deploy banking-api build.*'
+                )
+            }
+        }
+
+
         stage('Setup Python Environment') {
             steps {
                 sh '''
